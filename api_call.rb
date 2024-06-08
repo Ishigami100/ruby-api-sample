@@ -5,46 +5,86 @@ require 'dotenv'
 require 'nokogiri'
 require 'open-uri'
 
-Dotenv.load
+class ApiCall
+  def initialize
+    Dotenv.load
 
-# 環境変数を読み込む
-client_access_token =ENV['GENIUS_ACCESS_TOKEN']
+    # 環境変数を読み込む
+    @client_access_token = ENV['GENIUS_ACCESS_TOKEN']
+  end
 
-# Genius APIに対する認証ヘッダーを作成
-headers = {
-  'Authorization' => "Bearer #{client_access_token}"
-}
+  def headers
+    # Genius APIに対する認証ヘッダーを作成
+    {
+      'Authorization' => "Bearer #{@client_access_token}"
+    }
+  end
 
-# 検索クエリを送信して曲IDを取得
-search_query = 'lemon 米津'
-uri = URI("https://api.genius.com/search?q=#{URI.encode_www_form_component(search_query)}")
-response = Net::HTTP.get_response(uri, headers)
-parsed_response = JSON.parse(response.body)
-p song_id = parsed_response['response']['hits'][0]['result']['id']
+  def search_song_id(search_query)
+    uri = URI("https://api.genius.com/search?q=#{URI.encode_www_form_component(search_query)}")
+    response = Net::HTTP.get_response(uri, headers)
 
-# 曲の埋め込みコンテンツを取得
-uri = URI("https://api.genius.com/songs/#{song_id}")
-response = Net::HTTP.get_response(uri, headers)
-parsed_response = JSON.parse(response.body)
-p embed_content = parsed_response['response']['song']['embed_content']
-response_doc = Nokogiri::HTML.fragment(embed_content)
-song_lyrics_url = response_doc.css('a').first['href']
+    if response.is_a?(Net::HTTPSuccess)
+      parsed_response = JSON.parse(response.body)
+      if parsed_response['response']['hits'].any?
+        return parsed_response['response']['hits'][0]['result']['id']
+      else
+        raise "No hits found for query: #{search_query}"
+      end
+    else
+      raise "Error fetching song ID: #{response.message}"
+    end
+  end
 
-# URLからHTMLデータを取得
-html = URI.open(song_lyrics_url)
+  # 曲の埋め込みコンテンツを取得
+  def get_lyrics(song_id)
+    uri = URI("https://api.genius.com/songs/#{song_id}")
+    response = Net::HTTP.get_response(uri, headers)
 
-# Nokogiriを使ってHTMLをパース
-doc = Nokogiri::HTML(html)
+    if response.is_a?(Net::HTTPSuccess)
+      parsed_response = JSON.parse(response.body)
+      embed_content = parsed_response['response']['song']['embed_content']
+      response_doc = Nokogiri::HTML.fragment(embed_content)
+      song_lyrics_url = response_doc.css('a').first['href']
 
-# 歌詞部分を抽出する
-# Geniusの歌詞は通常、divタグでクラス名が 'lyrics' もしくは 'Lyrics__Root-sc-1ynbvzw-0' で囲まれている
-lyrics = doc.css('.lyrics').text.strip
+      # URLからHTMLデータを取得
+      html = URI.open(song_lyrics_url)
 
-# 新しいデザインのGeniusページでは、歌詞が別の場所にある場合があります
-if lyrics.empty?
-  lyrics = doc.css('[data-lyrics-container="true"]').text.strip
+      # Nokogiriを使ってHTMLをパース
+      doc = Nokogiri::HTML(html)
+
+      # 歌詞部分を抽出する
+      # Geniusの歌詞は通常、divタグでクラス名が 'lyrics' もしくは 'Lyrics__Root-sc-1ynbvzw-0' で囲まれている
+      lyrics = doc.css('.lyrics').text.strip
+
+      # 新しいデザインのGeniusページでは、歌詞が別の場所にある場合があります
+      if lyrics.empty?
+        lyrics = doc.css('[data-lyrics-container="true"]').text.strip
+      end
+
+      # デバッグ用出力
+      puts "Original Lyrics: #{lyrics}"
+
+      # []で囲まれた部分を除去する
+      cleaned_lyrics = lyrics.gsub(/\[.*?\]/, '')
+
+      # デバッグ用出力
+      puts "Cleaned Lyrics: #{cleaned_lyrics}"
+
+      cleaned_lyrics
+    else
+      raise "Error fetching lyrics: #{response.message}"
+    end
+  end
 end
 
-# 歌詞を表示
-puts lyrics
-
+# クラスのインスタンスを作成し、メソッドを呼び出す
+api_call = ApiCall.new
+begin
+  search_query = "Lemon 米津玄師"
+  song_id = api_call.search_song_id(search_query)
+  lyrics = api_call.get_lyrics(song_id)
+  puts "Final Lyrics: #{lyrics}"
+rescue => e
+  puts "An error occurred: #{e.message}"
+end
